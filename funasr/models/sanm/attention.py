@@ -29,6 +29,15 @@ def preprocess_for_attn(x, mask, cache, pad_fn, kernel_size):
     return x, cache
 
 
+@torch.jit.script
+def sanm_mask_slice(mask: torch.Tensor, inputs: torch.Tensor) -> torch.Tensor:
+    print("DEBUG SANM: mask", mask.size(), "inputs", inputs.size())
+    if mask.size(1) > inputs.size(1):
+        print("DEBUG SANM: Slicing mask triggered")
+        return mask[:, :inputs.size(1), :]
+    return mask
+
+
 torch_version = tuple([int(i) for i in torch.__version__.split(".")[:2]])
 if torch_version >= (1, 8):
     import torch.fx
@@ -508,6 +517,7 @@ class MultiHeadedAttentionSANMDecoder(nn.Module):
         #     "mask: {}".format(mask.size()))
         if mask is not None:
             mask = torch.reshape(mask, (b, -1, 1))
+            mask = sanm_mask_slice(mask, inputs)
             # logging.info("in fsmn, mask: {}, {}".format(mask.size(), mask[0:100:50, :, :]))
             if mask_shfit_chunk is not None:
                 # logging.info("in fsmn, mask_fsmn: {}, {}".format(mask_shfit_chunk.size(), mask_shfit_chunk[0:100:50, :, :]))

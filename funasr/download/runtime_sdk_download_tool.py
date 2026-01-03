@@ -23,16 +23,26 @@ def main():
     output_dir = args.model_name
     if not Path(args.model_name).exists():
         from modelscope.hub.snapshot_download import snapshot_download
+        from modelscope.hub.errors import NotExistError
 
         try:
             model_dir = snapshot_download(
                 args.model_name, cache_dir=args.export_dir, revision=args.model_revision
             )
             output_dir = os.path.join(args.export_dir, args.model_name)
-        except:
-            raise "model_dir must be model_name in modelscope or local path downloaded from modelscope, but is {}".format(
-                model_dir
-            )
+        except NotExistError:
+            print(f"Warning: Revision {args.model_revision} not found, trying default revision...")
+            try:
+                model_dir = snapshot_download(
+                    args.model_name, cache_dir=args.export_dir, revision=None
+                )
+                output_dir = os.path.join(args.export_dir, args.model_name)
+            except Exception as e:
+                raise e
+        except Exception as e:
+             # If it's another error, we re-raise it or handle it as before, but the original code raised a string which is bad practice.
+             # Let's keep the logic but make it better.
+             raise RuntimeError(f"Failed to download model {model_dir}: {e}")
     if args.export:
         model_file = os.path.join(model_dir, "model.onnx")
         if args.quantize:

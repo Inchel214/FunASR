@@ -1,6 +1,5 @@
-
 download_model_dir="/workspace/models"
-model_dir="FunAudioLLM/Fun-ASR-Nano-2512"
+model_dir="iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 vad_dir="iic/speech_fsmn_vad_zh-cn-16k-common-onnx"
 punc_dir="iic/punc_ct-transformer_cn-en-common-vocab471067-large-onnx"
 itn_dir="thuduj12/fst_itn_zh"
@@ -38,5 +37,6 @@ $cmd_path/${cmd}  \
   --port ${port} \
   --certfile  "${certfile}" \
   --keyfile "${keyfile}" \
-  --hotword "${hotword}" &
-
+  --hotword "${hotword}" \
+  --gpu \
+  --bladedisc false &

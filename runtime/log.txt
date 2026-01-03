@@ -1,0 +1,29 @@
+nohup: ignoring input
+I20251225 16:17:25.029927 16548 funasr-wss-server.cpp:25] model-dir : damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-onnx
+I20251225 16:17:25.030009 16548 funasr-wss-server.cpp:25] quantize : true
+I20251225 16:17:25.030020 16548 funasr-wss-server.cpp:25] bladedisc : true
+I20251225 16:17:25.030030 16548 funasr-wss-server.cpp:25] vad-dir : damo/speech_fsmn_vad_zh-cn-16k-common-onnx
+I20251225 16:17:25.030038 16548 funasr-wss-server.cpp:25] vad-quant : true
+I20251225 16:17:25.030047 16548 funasr-wss-server.cpp:25] punc-dir : damo/punc_ct-transformer_cn-en-common-vocab471067-large-onnx
+I20251225 16:17:25.030055 16548 funasr-wss-server.cpp:25] punc-quant : true
+I20251225 16:17:25.030064 16548 funasr-wss-server.cpp:25] itn-dir : thuduj12/fst_itn_zh
+I20251225 16:17:25.030073 16548 funasr-wss-server.cpp:25] lm-dir : damo/speech_ngram_lm_zh-cn-ai-wesp-fst
+I20251225 16:17:25.030081 16548 funasr-wss-server.cpp:25] hotword : ../../hotwords.txt
+I20251225 16:17:25.030089 16548 funasr-wss-server.cpp:25] model-revision : v2.0.5
+I20251225 16:17:25.030098 16548 funasr-wss-server.cpp:25] vad-revision : v2.0.6
+I20251225 16:17:25.030107 16548 funasr-wss-server.cpp:25] punc-revision : v2.0.5
+I20251225 16:17:25.030115 16548 funasr-wss-server.cpp:25] itn-revision : v1.0.1
+I20251225 16:17:25.030124 16548 funasr-wss-server.cpp:25] lm-revision : v1.0.2
+I20251225 16:17:25.030138 16548 funasr-wss-server.cpp:216] Download model: damo/speech_fsmn_vad_zh-cn-16k-common-onnx from modelscope: 
+Traceback (most recent call last):
+  File "/root/miniforge3/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/root/miniforge3/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/root/miniforge3/lib/python3.10/site-packages/funasr/download/runtime_sdk_download_tool.py", line 5, in <module>
+    from funasr.utils.type_utils import str2bool
+  File "/root/miniforge3/lib/python3.10/site-packages/funasr/utils/type_utils.py", line 6, in <module>
+    import humanfriendly
+ModuleNotFoundError: No module named 'humanfriendly'
+I20251225 16:17:30.643908 16548 funasr-wss-server.cpp:223] Failed to download model from modelscope. If you set local vad model path, you can ignore the errors.
+E20251225 16:17:30.643982 16548 funasr-wss-server.cpp:231] /workspace/models/damo/speech_fsmn_vad_zh-cn-16k-common-onnx/model_quant.onnx do not exists.

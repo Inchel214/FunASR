@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.16)
 
 project(FunASRWebscoket) 
 
+# Force C++11 ABI globally for all targets (including third_party libs)
+add_compile_options(-D_GLIBCXX_USE_CXX11_ABI=1)
+add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=1")
+
 set(CMAKE_CXX_STANDARD 14 CACHE STRING "The C++ version to be used.")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -26,14 +31,40 @@ endif()
 
 if(GPU)
     add_definitions(-DUSE_GPU)
-    set(TORCH_DIR "/usr/local/lib/python3.8/dist-packages/torch")
-    set(TORCH_BLADE_DIR "/usr/local/lib/python3.8/dist-packages/torch_blade")
-    include_directories(${TORCH_DIR}/include)
-    include_directories(${TORCH_DIR}/include/torch/csrc/api/include)
+    # set(TORCH_DIR "/usr/local/lib/python3.8/dist-packages/torch")
+    # set(TORCH_BLADE_DIR "/usr/local/lib/python3.8/dist-packages/torch_blade")
+    
+    if(NOT DEFINED TORCH_DIR)
+        message(FATAL_ERROR "TORCH_DIR is not defined. Please run cmake with -DTORCH_DIR=/path/to/libtorch")
+    endif()
+
+    list(APPEND CMAKE_PREFIX_PATH "${TORCH_DIR}")
+    find_package(Torch REQUIRED)
+    
+    include_directories(${TORCH_INCLUDE_DIRS})
     link_directories(${TORCH_DIR}/lib)
-    link_directories(${TORCH_BLADE_DIR})
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -D_GLIBCXX_USE_CXX11_ABI=0")
+
+    # include_directories(${TORCH_DIR}/include)
+    # include_directories(${TORCH_DIR}/include/torch/csrc/api/include)
+    # link_directories(${TORCH_DIR}/lib)
+    
+    # Optional: TorchBlade support
+    if(DEFINED TORCH_BLADE_DIR)
+        include_directories(${TORCH_BLADE_DIR}/include)
+        link_directories(${TORCH_BLADE_DIR}/lib)
+        list(APPEND TORCH_LIBRARIES torch_blade ral_base_context)
+    endif()
+
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS} -fPIC -D_GLIBCXX_USE_CXX11_ABI=1")
+else()
+    # If not GPU, we still need to decide ABI. 
+    # For compatibility with many prebuilt libraries, default might be 0, 
+    # but if we want to align with modern standards or if user wants consistent ABI:
+    # add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1) 
 endif()
+
+# Force C++11 ABI for all targets to match LibTorch
+add_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
  
 if(ENABLE_WEBSOCKET)
   # cmake_policy(SET CMP0135 NEW)

@@ -14,7 +14,7 @@ from multiprocessing import Process
 
 import logging
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -77,9 +77,13 @@ async def record_microphone():
 
     p = pyaudio.PyAudio()
 
-    stream = p.open(
-        format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK
-    )
+    try:
+        stream = p.open(
+            format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK
+        )
+    except Exception as e:
+        print("Error opening microphone: " + str(e))
+        return
     # hotwords
     fst_dict = {}
     hotword_msg = ""
@@ -128,6 +132,7 @@ async def record_microphone():
 
 
 async def record_from_scp(chunk_begin, chunk_size):
+    print("DEBUG: Entering record_from_scp")
     global voices
     is_finished = False
     if args.audio_in.endswith(".scp"):
@@ -166,27 +171,60 @@ async def record_from_scp(chunk_begin, chunk_size):
     if chunk_size > 0:
         wavs = wavs[chunk_begin : chunk_begin + chunk_size]
     for wav in wavs:
+        print(f"DEBUG: Processing wav: {wav}")
         wav_splits = wav.strip().split()
 
         wav_name = wav_splits[0] if len(wav_splits) > 1 else "demo"
         wav_path = wav_splits[1] if len(wav_splits) > 1 else wav_splits[0]
+        print(f"DEBUG: wav_path: {wav_path}")
         if not len(wav_path.strip()) > 0:
             continue
-        if wav_path.endswith(".pcm"):
-            with open(wav_path, "rb") as f:
-                audio_bytes = f.read()
-        elif wav_path.endswith(".wav"):
-            import wave
+        try:
+            if wav_path.endswith(".pcm"):
+                with open(wav_path, "rb") as f:
+                    audio_bytes = f.read()
+            elif wav_path.endswith(".wav"):
+                import wave
 
-            with wave.open(wav_path, "rb") as wav_file:
-                params = wav_file.getparams()
-                sample_rate = wav_file.getframerate()
-                frames = wav_file.readframes(wav_file.getnframes())
-                audio_bytes = bytes(frames)
-        else:
-            wav_format = "others"
-            with open(wav_path, "rb") as f:
-                audio_bytes = f.read()
+                with wave.open(wav_path, "rb") as wav_file:
+                    params = wav_file.getparams()
+                    sample_rate = wav_file.getframerate()
+                    n_channels = wav_file.getnchannels()
+                    sampwidth = wav_file.getsampwidth()
+                    frames = wav_file.readframes(wav_file.getnframes())
+                    audio_bytes = bytes(frames)
+
+                    print(f"DEBUG: Original Audio - Rate: {sample_rate}, Channels: {n_channels}, Width: {sampwidth}, Bytes: {len(audio_bytes)}")
+
+                    import audioop
+                    # 1. Convert to Mono if needed
+                    if n_channels == 2:
+                        print("DEBUG: Converting Stereo to Mono")
+                        audio_bytes = audioop.tomono(audio_bytes, sampwidth, 0.5, 0.5)
+                        n_channels = 1
+                    elif n_channels > 2:
+                        print(f"WARNING: Unsupported channel count {n_channels}, keeping first channel only")
+                        # This is a simplification; audioop doesn't support >2 channels easily for tomono
+                        # We might need manual slicing if >2, but let's assume 2 max for now or let it fail/warn
+                        pass
+
+                    # 2. Resample to 16000 if needed
+                    target_fs = 16000
+                    if sample_rate != target_fs:
+                        print(f"DEBUG: Resampling from {sample_rate} to {target_fs}")
+                        audio_bytes, _ = audioop.ratecv(audio_bytes, sampwidth, n_channels, sample_rate, target_fs, None)
+                        sample_rate = target_fs
+                    
+                    print(f"DEBUG: Processed Audio - Rate: {sample_rate}, Channels: {n_channels}, Bytes: {len(audio_bytes)}")
+
+            else:
+                wav_format = "others"
+                with open(wav_path, "rb") as f:
+                    audio_bytes = f.read()
+            print(f"DEBUG: Read audio bytes: {len(audio_bytes)}")
+        except Exception as e:
+            print(f"ERROR: Failed to read file {wav_path}: {e}")
+            continue
 
         stride = int(60 * args.chunk_size[1] / args.chunk_interval / 1000 * sample_rate * 2)
         chunk_num = (len(audio_bytes) - 1) // stride + 1
@@ -210,28 +248,33 @@ async def record_from_scp(chunk_begin, chunk_size):
         )
 
         # voices.put(message)
+        print("DEBUG: Sending first message")
         await websocket.send(message)
         is_speaking = True
+        print(f"DEBUG: Starting chunk loop, chunk_num={chunk_num}")
         for i in range(chunk_num):
 
             beg = i * stride
             data = audio_bytes[beg : beg + stride]
             message = data
             # voices.put(message)
+            # print(f"DEBUG: Sending chunk {i}")
             await websocket.send(message)
+            if i < 50 or i % 100 == 0:
+                print(f"DEBUG: Sent chunk {i}/{chunk_num}")
             if i == chunk_num - 1:
                 is_speaking = False
                 message = json.dumps({"is_speaking": is_speaking})
                 # voices.put(message)
                 await websocket.send(message)
 
-            sleep_duration = (
-                0.001
-                if args.mode == "offline"
-                else 60 * args.chunk_size[1] / args.chunk_interval / 1000
-            )
-
-            await asyncio.sleep(sleep_duration)
+            if not args.send_without_sleep:
+                sleep_duration = (
+                    0.05
+                    if args.mode == "offline"
+                    else 60 * args.chunk_size[1] / args.chunk_interval / 1000
+                )
+                await asyncio.sleep(sleep_duration)
 
     if not args.mode == "offline":
         await asyncio.sleep(2)
@@ -258,9 +301,9 @@ async def message(id):
         ibest_writer = None
     try:
         while True:
-
             meg = await websocket.recv()
             meg = json.loads(meg)
+            print("DEBUG: Received message:", meg) # Uncomment for debug
             wav_name = meg.get("wav_name", "demo")
             text = meg["text"]
             timestamp = ""
@@ -280,8 +323,8 @@ async def message(id):
             if meg["mode"] == "online":
                 text_print += "{}".format(text)
                 text_print = text_print[-args.words_max_print :]
-                os.system("clear")
-                print("\rpid" + str(id) + ": " + text_print)
+                # os.system("clear")
+                print("pid" + str(id) + ": " + text_print)
             elif meg["mode"] == "offline":
                 if timestamp != "":
                     text_print += "{} timestamp: {}".format(text, timestamp)
@@ -290,7 +333,7 @@ async def message(id):
 
                 # text_print = text_print[-args.words_max_print:]
                 # os.system('clear')
-                print("\rpid" + str(id) + ": " + wav_name + ": " + text_print)
+                print("pid" + str(id) + ": " + wav_name + ": " + text_print)
                 offline_msg_done = True
             else:
                 if meg["mode"] == "2pass-online":
@@ -301,8 +344,8 @@ async def message(id):
                     text_print = text_print_2pass_offline + "{}".format(text)
                     text_print_2pass_offline += "{}".format(text)
                 text_print = text_print[-args.words_max_print :]
-                os.system("clear")
-                print("\rpid" + str(id) + ": " + text_print)
+                # os.system("clear")
+                print("pid" + str(id) + ": " + text_print)
                 # offline_msg_done=True
 
     except Exception as e:
@@ -321,23 +364,33 @@ async def ws_client(id, chunk_begin, chunk_size):
         offline_msg_done = False
         voices = Queue()
         if args.ssl == 1:
-            ssl_context = ssl.SSLContext()
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
             uri = "wss://{}:{}".format(args.host, args.port)
+            print("connect to", uri)
+            async with websockets.connect(
+                uri, subprotocols=["binary"], ping_interval=None, ssl=ssl_context, open_timeout=20
+            ) as websocket:
+                if args.audio_in is not None:
+                    task = asyncio.create_task(record_from_scp(i, 1))
+                else:
+                    task = asyncio.create_task(record_microphone())
+                task3 = asyncio.create_task(message(str(id) + "_" + str(i)))  # processid+fileid
+                await asyncio.gather(task, task3)
         else:
             uri = "ws://{}:{}".format(args.host, args.port)
             ssl_context = None
-        print("connect to", uri)
-        async with websockets.connect(
-            uri, subprotocols=["binary"], ping_interval=None, ssl=ssl_context
-        ) as websocket:
-            if args.audio_in is not None:
-                task = asyncio.create_task(record_from_scp(i, 1))
-            else:
-                task = asyncio.create_task(record_microphone())
-            task3 = asyncio.create_task(message(str(id) + "_" + str(i)))  # processid+fileid
-            await asyncio.gather(task, task3)
+            print("connect to", uri)
+            async with websockets.connect(
+                uri, subprotocols=["binary"], ping_interval=None, open_timeout=20
+            ) as websocket:
+                if args.audio_in is not None:
+                    task = asyncio.create_task(record_from_scp(i, 1))
+                else:
+                    task = asyncio.create_task(record_microphone())
+                task3 = asyncio.create_task(message(str(id) + "_" + str(i)))  # processid+fileid
+                await asyncio.gather(task, task3)
     exit(0)
 
 

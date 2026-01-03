@@ -20,6 +20,7 @@ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/bigobj>")
 endif()
 
 add_library(funasr SHARED ${files})
+# target_compile_definitions(funasr PUBLIC -D_GLIBCXX_USE_CXX11_ABI=1)
 
 if(WIN32)
     set(EXTRA_LIBS yaml-cpp csrc kaldi-decoder fst glog gflags avutil avcodec avformat swresample onnxruntime)
@@ -39,10 +40,23 @@ else()
 endif()
 
 if(GPU)
-    set(TORCH_DEPS torch torch_cuda torch_cpu c10 c10_cuda torch_blade ral_base_context)
+    # Ensure Torch is found in this scope
+    if(NOT Torch_FOUND)
+        if(DEFINED TORCH_DIR)
+            list(APPEND CMAKE_PREFIX_PATH "${TORCH_DIR}")
+        endif()
+        find_package(Torch REQUIRED)
+    endif()
+    message(STATUS "[src] TORCH_LIBRARIES: ${TORCH_LIBRARIES}")
+
+    # set(TORCH_DEPS torch torch_cuda torch_cpu c10 c10_cuda)
+    if(DEFINED TORCH_BLADE_DIR)
+        list(APPEND TORCH_LIBRARIES torch_blade ral_base_context)
+    endif()
 endif()
 
 #message("CXX_FLAGS "${CMAKE_CXX_FLAGS})
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/third_party)
-target_link_libraries(funasr PUBLIC onnxruntime ${EXTRA_LIBS} ${TORCH_DEPS})
+target_link_libraries(funasr PUBLIC onnxruntime ${EXTRA_LIBS} ${TORCH_LIBRARIES})
+
