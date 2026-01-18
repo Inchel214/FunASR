@@ -1,0 +1,6 @@
+build/
+model/
+*.wav
+*.pyc
+__pycache__/
+.vscode/

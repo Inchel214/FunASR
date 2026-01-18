@@ -54,8 +54,8 @@ struct WaveHeader {
       return false;
     }
 
-    if (subchunk1_size != 16) {  // 16 for PCM
-      printf("Expected subchunk1_size 16. Given: %d\n",
+    if (subchunk1_size < 16) {  // 16 for PCM
+      printf("Expected subchunk1_size >= 16. Given: %d\n",
                        subchunk1_size);
       return false;
     }
@@ -65,8 +65,8 @@ struct WaveHeader {
       return false;
     }
 
-    if (num_channels != 1) {  // we support only single channel for now
-      printf("Expected single channel. Given: %d\n", num_channels);
+    if (num_channels < 1) {  // we support only single channel for now
+      printf("Expected at least one channel. Given: %d\n", num_channels);
       return false;
     }
     if (byte_rate != (sample_rate * num_channels * bits_per_sample / 8)) {
@@ -633,44 +633,104 @@ bool Audio::LoadWav(const char *filename, int32_t* sampling_rate, bool resample)
     
     offset = 0;
     std::ifstream is(filename, std::ifstream::binary);
-    is.read(reinterpret_cast<char *>(&header), sizeof(header));
     if(!is){
         LOG(ERROR) << "Failed to read " << filename;
         return false;
     }
 
-    if (!header.Validate()) {
-        return false;
-    }
-
-    header.SeekToDataChunk(is);
-    if (!is) {
-        return false;
-    }
+    // 1. Read RIFF header (12 bytes)
+    is.read(reinterpret_cast<char *>(&header.chunk_id), 12); // chunk_id, chunk_size, format
     
+    if (header.chunk_id != 0x46464952 || header.format != 0x45564157) {
+        LOG(ERROR) << "Invalid RIFF/WAVE header";
+        return false;
+    }
+
+    // 2. Find and read fmt chunk
+    bool fmt_found = false;
+    while (is) {
+        uint32_t chunk_id, chunk_size;
+        is.read(reinterpret_cast<char *>(&chunk_id), 4);
+        is.read(reinterpret_cast<char *>(&chunk_size), 4);
+        
+        if (chunk_id == 0x20746d66) { // 'fmt '
+            header.subchunk1_id = chunk_id;
+            header.subchunk1_size = chunk_size;
+            is.read(reinterpret_cast<char *>(&header.audio_format), 16); // audio_format to bits_per_sample
+            
+            if (chunk_size > 16) {
+                is.seekg(chunk_size - 16, std::ios::cur);
+            }
+            fmt_found = true;
+            break;
+        } else {
+            // Skip other chunks
+            is.seekg(chunk_size, std::ios::cur);
+        }
+    }
+
+    if (!fmt_found) {
+        LOG(ERROR) << "fmt chunk not found";
+        return false;
+    }
+
     if (!header.Validate()) {
         return false;
     }
 
+    // 3. Find data chunk
+    // Initialize subchunk2_id to 0 to start search
+    header.subchunk2_id = 0; 
+    // SeekToDataChunk expects us to be at the start of a chunk (which we are, after the loop above)
+    // However, the loop above reads the next chunk header. Wait.
+    // In the loop above, if we found fmt, we are positioned after fmt chunk (and its skipped bytes).
+    // So we are at the start of the next chunk.
+    
+    // SeekToDataChunk reads subchunk2_id and size, checks if it is data, if not skips.
+    // But SeekToDataChunk assumes subchunk2_id is already populated? No.
+    // Let's look at SeekToDataChunk implementation:
+    // while (is && subchunk2_id != 0x61746164) { ... is.read... }
+    // It checks the MEMBER variable subchunk2_id. 
+    // We need to read the first chunk header for SeekToDataChunk to check, OR modify SeekToDataChunk logic.
+    // Actually SeekToDataChunk implementation in audio.cpp lines 90-100:
+    /*
+      void SeekToDataChunk(std::istream &is) {
+        while (is && subchunk2_id != 0x61746164) {
+          is.seekg(subchunk2_size, std::istream::cur);
+          is.read(reinterpret_cast<char *>(&subchunk2_id), sizeof(int32_t));
+          is.read(reinterpret_cast<char *>(&subchunk2_size), sizeof(int32_t));
+        }
+      }
+    */
+    // It assumes subchunk2_id is already set to something (from previous read) and if it is NOT data, it skips and reads next.
+    // Since we just finished reading fmt chunk, we haven't read the next chunk header yet.
+    // So we should read the next chunk header into subchunk2_id/size before calling SeekToDataChunk.
+    
+    is.read(reinterpret_cast<char *>(&header.subchunk2_id), 4);
+    is.read(reinterpret_cast<char *>(&header.subchunk2_size), 4);
+    
     header.SeekToDataChunk(is);
     if (!is) {
         return false;
     }
     
     *sampling_rate = header.sample_rate;
-    // header.subchunk2_size contains the number of bytes in the data.
-    // As we assume each sample contains two bytes, so it is divided by 2 here
-    speech_len = header.subchunk2_size / 2;
-    speech_buff = (int16_t *)malloc(sizeof(int16_t) * speech_len);
+    int num_channels = header.num_channels;
+    int total_samples = header.subchunk2_size / 2;
+    
+    speech_buff = (int16_t *)malloc(header.subchunk2_size);
 
     if (speech_buff)
     {
-        memset(speech_buff, 0, sizeof(int16_t) * speech_len);
+        memset(speech_buff, 0, header.subchunk2_size);
         is.read(reinterpret_cast<char *>(speech_buff), header.subchunk2_size);
         if (!is) {
             LOG(ERROR) << "Failed to read " << filename;
             return false;
         }
+        
+        // Output length (frames)
+        speech_len = total_samples / num_channels;
         speech_data = (float*)malloc(sizeof(float) * speech_len);
         memset(speech_data, 0, sizeof(float) * speech_len);
 
@@ -678,8 +738,13 @@ bool Audio::LoadWav(const char *filename, int32_t* sampling_rate, bool resample)
         if (data_type == 1) {
             scale = 32768;
         }
-        for (int32_t i = 0; i != speech_len; ++i) {
-            speech_data[i] = (float)speech_buff[i] / scale;
+        
+        for (int32_t i = 0; i < speech_len; ++i) {
+            float sum = 0;
+            for (int c = 0; c < num_channels; ++c) {
+                sum += speech_buff[i * num_channels + c];
+            }
+            speech_data[i] = (sum / num_channels) / scale;
         }
 
         //resample
@@ -705,21 +770,50 @@ bool Audio::LoadWav2Char(const char *filename, int32_t* sampling_rate)
     }
     offset = 0;
     std::ifstream is(filename, std::ifstream::binary);
-    is.read(reinterpret_cast<char *>(&header), sizeof(header));
     if(!is){
         LOG(ERROR) << "Failed to read " << filename;
         return false;
     }
-    if (!header.Validate()) {
+    
+    // 1. Read RIFF header (12 bytes)
+    is.read(reinterpret_cast<char *>(&header.chunk_id), 12); // chunk_id, chunk_size, format
+    
+    if (header.chunk_id != 0x46464952 || header.format != 0x45564157) {
+        LOG(ERROR) << "Invalid RIFF/WAVE header";
         return false;
     }
-    header.SeekToDataChunk(is);
-        if (!is) {
-            return false;
+
+    // 2. Find and read fmt chunk
+    bool fmt_found = false;
+    while (is) {
+        uint32_t chunk_id, chunk_size;
+        is.read(reinterpret_cast<char *>(&chunk_id), 4);
+        is.read(reinterpret_cast<char *>(&chunk_size), 4);
+        
+        if (chunk_id == 0x20746d66) { // 'fmt '
+            header.subchunk1_id = chunk_id;
+            header.subchunk1_size = chunk_size;
+            is.read(reinterpret_cast<char *>(&header.audio_format), 16);
+            
+            if (chunk_size > 16) {
+                is.seekg(chunk_size - 16, std::ios::cur);
+            }
+            fmt_found = true;
+            break;
+        } else {
+            is.seekg(chunk_size, std::ios::cur);
+        }
     }
-    if (!header.Validate()) {
+
+    if (!fmt_found || !header.Validate()) {
         return false;
     }
+
+    // 3. Find data chunk
+    header.subchunk2_id = 0;
+    is.read(reinterpret_cast<char *>(&header.subchunk2_id), 4);
+    is.read(reinterpret_cast<char *>(&header.subchunk2_size), 4);
+    
     header.SeekToDataChunk(is);
     if (!is) {
         return false;
@@ -748,16 +842,77 @@ bool Audio::LoadWav(const char* buf, int n_file_len, int32_t* sampling_rate)
         speech_buff = nullptr;
     }
 
-    std::memcpy(&header, buf, sizeof(header));
+    const char* ptr = buf;
+    const char* end = buf + n_file_len;
+
+    if (n_file_len < 12) return false;
+
+    // 1. Read RIFF header
+    memcpy(&header.chunk_id, ptr, 12);
+    ptr += 12;
+
+    if (header.chunk_id != 0x46464952 || header.format != 0x45564157) return false;
+
+    // 2. Find fmt chunk
+    bool fmt_found = false;
+    while (ptr + 8 <= end) {
+        uint32_t chunk_id, chunk_size;
+        memcpy(&chunk_id, ptr, 4);
+        memcpy(&chunk_size, ptr + 4, 4);
+        ptr += 8;
+
+        if (chunk_id == 0x20746d66) { // fmt
+            header.subchunk1_id = chunk_id;
+            header.subchunk1_size = chunk_size;
+            if (ptr + 16 > end) return false;
+            memcpy(&header.audio_format, ptr, 16);
+            ptr += 16;
+            if (chunk_size > 16) ptr += (chunk_size - 16);
+            fmt_found = true;
+            break;
+        } else {
+            ptr += chunk_size;
+        }
+    }
+
+    if (!fmt_found || !header.Validate()) return false;
+
+    // 3. Find data chunk
+    header.subchunk2_id = 0;
+    while (ptr + 8 <= end) {
+        uint32_t chunk_id, chunk_size;
+        memcpy(&chunk_id, ptr, 4);
+        memcpy(&chunk_size, ptr + 4, 4);
+        ptr += 8;
+
+        if (chunk_id == 0x61746164) { // data
+            header.subchunk2_id = chunk_id;
+            header.subchunk2_size = chunk_size;
+            break;
+        } else {
+            ptr += chunk_size;
+        }
+    }
+
+    if (header.subchunk2_id != 0x61746164) return false;
 
     *sampling_rate = header.sample_rate;
-    speech_len = header.subchunk2_size / 2;
-    speech_buff = (int16_t *)malloc(sizeof(int16_t) * speech_len);
+    int num_channels = header.num_channels;
+    int total_samples = header.subchunk2_size / 2;
+    
+    // Check buffer bounds
+    if (ptr + header.subchunk2_size > end) {
+        LOG(ERROR) << "Unexpected end of buffer";
+        return false;
+    }
+
+    speech_buff = (int16_t *)malloc(header.subchunk2_size);
     if (speech_buff)
     {
-        memset(speech_buff, 0, sizeof(int16_t) * speech_len);
-        memcpy((void*)speech_buff, (const void*)(buf + WAV_HEADER_SIZE), speech_len * sizeof(int16_t));
+        memset(speech_buff, 0, header.subchunk2_size);
+        memcpy((void*)speech_buff, (const void*)ptr, header.subchunk2_size);
 
+        speech_len = total_samples / num_channels;
         speech_data = (float*)malloc(sizeof(float) * speech_len);
         memset(speech_data, 0, sizeof(float) * speech_len);
 
@@ -766,8 +921,12 @@ bool Audio::LoadWav(const char* buf, int n_file_len, int32_t* sampling_rate)
             scale = 32768;
         }
 
-        for (int32_t i = 0; i != speech_len; ++i) {
-            speech_data[i] = (float)speech_buff[i] / scale;
+        for (int32_t i = 0; i < speech_len; ++i) {
+            float sum = 0;
+            for (int c = 0; c < num_channels; ++c) {
+                sum += speech_buff[i * num_channels + c];
+            }
+            speech_data[i] = (sum / num_channels) / scale;
         }
         
         //resample

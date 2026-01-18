@@ -49,6 +49,14 @@ add_executable(funasr-onnx-online-rtf "funasr-onnx-online-rtf.cpp" ${RELATION_SO
 target_link_options(funasr-onnx-online-rtf PRIVATE "-Wl,--no-as-needed")
 target_link_libraries(funasr-onnx-online-rtf PUBLIC funasr)
 
+add_executable(simple-asr-demo "simple_asr_demo.cpp" ${RELATION_SOURCE})
+target_link_options(simple-asr-demo PRIVATE "-Wl,--no-as-needed")
+target_link_libraries(simple-asr-demo PUBLIC funasr)
+
+add_executable(simple-asr-demo-2pass "simple_asr_demo_2pass.cpp" ${RELATION_SOURCE})
+target_link_options(simple-asr-demo-2pass PRIVATE "-Wl,--no-as-needed")
+target_link_libraries(simple-asr-demo-2pass PUBLIC funasr)
+
 # include_directories(${FFMPEG_DIR}/include)
 # add_executable(ff "ffmpeg.cpp")
 # target_link_libraries(ff PUBLIC avutil avcodec avformat swresample)

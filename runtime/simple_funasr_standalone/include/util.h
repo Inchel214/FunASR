@@ -1,0 +1,6 @@
+#pragma once
+#include "precomp.h"
+
+namespace funasr {
+    void SplitString(const std::string& s, std::vector<std::string>& v, const std::string& c);
+}
