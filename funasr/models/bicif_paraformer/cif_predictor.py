@@ -505,15 +505,14 @@ def cif_export(hidden, alphas, threshold: float):
 
     fire_idxs = fires >= threshold
     frame_fires = torch.zeros_like(hidden)
-    max_label_len = frames[0, fire_idxs[0]].size(0)
     for b in range(batch_size):
         frame_fire = frames[b, fire_idxs[b]]
         frame_len = frame_fire.size(0)
         frame_fires[b, :frame_len, :] = frame_fire
-
-        if frame_len >= max_label_len:
-            max_label_len = frame_len
+    
+    max_label_len = fire_idxs.sum(dim=1).max()
     frame_fires = frame_fires[:, :max_label_len, :]
+
     return frame_fires, fires
 
 

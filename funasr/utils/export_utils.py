@@ -87,6 +87,7 @@ def _onnx(
         input_names=model.export_input_names(),
         output_names=model.export_output_names(),
         dynamic_axes=model.export_dynamic_axes(),
+        dynamo=False,
     )
 
     if quantize:

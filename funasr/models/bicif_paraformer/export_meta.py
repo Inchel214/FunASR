@@ -46,7 +46,12 @@ def export_forward(
     enc, enc_len = self.encoder(**batch)
     mask = self.make_pad_mask(enc_len)[:, None, :]
     pre_acoustic_embeds, pre_token_length, alphas, pre_peak_index = self.predictor(enc, mask)
-    pre_token_length = pre_token_length.round().type(torch.int32)
+    # pre_token_length = pre_token_length.round().type(torch.int32)
+    
+    # Use actual generated length from cif_export
+    threshold = self.predictor.threshold
+    fire_idxs = pre_peak_index >= threshold
+    pre_token_length = fire_idxs.sum(dim=1).type(torch.int32)
 
     decoder_out, _ = self.decoder(enc, enc_len, pre_acoustic_embeds, pre_token_length)
     decoder_out = torch.log_softmax(decoder_out, dim=-1)
@@ -58,8 +63,8 @@ def export_forward(
 
 
 def export_dummy_inputs(self):
-    speech = torch.randn(2, 30, 560)
-    speech_lengths = torch.tensor([6, 30], dtype=torch.int32)
+    speech = torch.randn(2, 200, 560)
+    speech_lengths = torch.tensor([100, 200], dtype=torch.int32)
     return (speech, speech_lengths)
 
 
